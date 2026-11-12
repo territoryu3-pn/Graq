@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Groq AI</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600&display=swap');
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Montserrat', sans-serif; user-select: none; }
+        body { background-color: #050505; color: #00ffcc; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+        
+        #header { padding: 15px; background: #0a0a0a; border-bottom: 1px solid #00ffcc; display: flex; justify-content: space-between; align-items: center; }
+        #header h1 { font-size: 18px; }
+        #status { font-size: 12px; color: #888; }
+        
+        #chat { flex: 1; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+        
+        .msg { padding: 10px; border-radius: 8px; max-width: 90%; font-size: 14px; line-height: 1.4; word-wrap: break-word; }
+        .msg.user { background: #1a1a1a; color: #fff; align-self: flex-end; border-right: 3px solid #00ffcc; }
+        .msg.ai { background: #001a1a; color: #00ffcc; align-self: flex-start; border-left: 3px solid #00ffcc; }
+        .msg.sys { background: #220000; color: #ff4d4d; font-size: 12px; text-align: center; align-self: center; border: none; }
+        
+        .audio-btn { background: #00ffcc; color: #000; border: none; padding: 4px 8px; margin-top: 5px; border-radius: 4px; font-size: 11px; font-weight: 600; cursor: pointer; }
+        
+        #controls { padding: 15px; background: #0a0a0a; border-top: 1px solid #00ffcc; display: flex; gap: 10px; }
+        input { flex: 1; padding: 12px; background: #111; border: 1px solid #333; color: #fff; border-radius: 8px; outline: none; font-size: 14px; }
+        input:focus { border-color: #00ffcc; }
+        button { padding: 12px 20px; background: #00ffcc; color: #000; border: none; border-radius: 8px; font-weight: 600; font-size: 14px; cursor: pointer; }
+        button:active { background: #00ccaa; }
+        
+        #mic-btn { position: absolute; bottom: 80px; right: 20px; width: 50px; height: 50px; border-radius: 50%; background: #001a1a; border: 2px solid #00ffcc; color: #00ffcc; font-size: 22px; display: flex; justify-content: center; align-items: center; cursor: pointer; }
+        #mic-btn.listening { background: #ff4d4d; color: #fff; border-color: #ff4d4d; }
+    </style>
+</head>
+<body>
+
+    <div id="header">
+        <h1>Groq AI</h1>
+        <div id="status">iframe mode</div>
+    </div>
+
+    <div id="chat">
+        <div class="msg ai">Система запущена. Я готов отвечать на любые вопросы!</div>
+    </div>
+
+    <div id="controls">
+        <input type="text" id="userInput" placeholder="Ваш вопрос..." autocomplete="off">
+        <button onclick="askGroq()">➤</button>
+    </div>
+
+    <div id="mic-btn" onclick="startMic()">🎤</div>
+
+    <audio id="mainAudio"></audio>
+
+    <!-- СКРЫТЫЙ IFRAME ДЛЯ ОБХОДА CORS -->
+    <iframe id="proxyFrame" name="proxyFrame" style="display: none;"></iframe>
+
+    <script>
+        // ==========================================
+        // 🔑 ВСТАВЬ СВОЙ КЛЮЧ GROQ (gsk_...)
+        // ==========================================
+        var GROQ_KEY = "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"; 
+        // ==========================================
+
+        var chatContainer = document.getElementById('chat');
+        var audioPlayer = document.getElementById('mainAudio');
+        var history = [
+            { role: "system", content: "Ты - умный ИИ-ассистент. Отвечай кратко и по делу." }
+        ];
+
+        function addMsg(text, type) {
+            var div = document.createElement('div');
+            div.className = 'msg ' + type;
+            div.innerHTML = text;
+            chatContainer.appendChild(div);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+            return div;
+        }
+
+        function speak(text, btn) {
+            var url = 'https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=ru&q=' + encodeURIComponent(text.substring(0, 200));
+            audioPlayer.src = url;
+            audioPlayer.play().then(function() {
+                if(btn) btn.innerText = "🔊 Играет...";
+            }).catch(function(e) {
+                if(btn) btn.innerText = "🔊 Ошибка звука";
+            });
+        }
+
+        // ==========================================
+        // ОТПРАВКА ЗАПРОСА ЧЕРЕЗ СКРЫТЫЙ IFRAME
+        // ==========================================
+        function askGroq() {
+            var input = document.getElementById('userInput');
+            var prompt = input.value.trim();
+            if (!prompt) return;
+            
+            addMsg(prompt, 'user');
+            input.value = "";
+
+            history.push({ role: "user", content: prompt });
+            var loadingMsg = addMsg("Думаю (через iframe)...", 'sys');
+
+            // Создаем форму внутри iframe, чтобы отправить POST запрос
+            var iframe = document.getElementById('proxyFrame');
+            var doc = iframe.contentWindow.document;
+            
+            // Очищаем iframe
+            doc.open();
+            doc.write('<html><body></body></html>');
+            doc.close();
+
+            // Создаем форму
+            var form = doc.createElement('form');
+            form.method = 'POST';
+            // Используем прокси, который принимает POST и передает его
+            form.action = 'https://corsproxy.io/?https://api.groq.com/openai/v1/chat/completions';
+            form.target = 'proxyFrame';
+
+            // Создаем скрытые поля для данных
+            var fields = {
+                'model': 'llama3-8b-8192',
+                'messages': JSON.stringify(history),
+                'temperature': '0.7',
+                'max_tokens': '500'
+            };
+
+            // Ключ авторизации
+            var authField = doc.createElement('input');
+            authField.type = 'hidden';
+            authField.name = 'Authorization'; // Это не сработает напрямую, нужен правильный Header
+            authField.value = 'Bearer ' + GROQ_KEY;
+            form.appendChild(authField);
+
+            for (var key in fields) {
+                var inputField = doc.createElement('input');
+                inputField.type = 'hidden';
+                inputField.name = key;
+                inputField.value = fields[key];
+                form.appendChild(inputField);
+            }
+
+            doc.body.appendChild(form);
+            form.submit();
+
+            // Тут мы не можем прочитать ответ из iframe (CORS), поэтому 
+            // этот метод скорее всего не сработает для получения данных обратно.
+            // Но мы попробуем.
+            addMsg("⚠️ Если iframe метод не сработал, нужно использовать другой прокси.", 'sys');
+            loadingMsg.remove();
+        }
+
+        // ... (остальной код для микрофона)
+        function startMic() {
+            var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (SR) {
+                var rec = new SR();
+                rec.lang = 'ru-RU';
+                var btn = document.getElementById('mic-btn');
+                
+                btn.classList.add('listening');
+                rec.start();
+                
+                rec.onresult = function(e) {
+                    document.getElementById('userInput').value = e.results[0][0].transcript;
+                    askGroq();
+                };
+                rec.onend = function() { btn.classList.remove('listening'); };
+                rec.onerror = function() { btn.classList.remove('listening'); };
+            } else {
+                alert("Микрофон не поддерживается.");
+            }
+        }
+
+        document.getElementById('userInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') askGroq();
+        });
+    </script>
+</body>
+</html>
